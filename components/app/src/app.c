@@ -8,6 +8,7 @@
 #include "freertos/projdefs.h"
 #include "adc_continuous_mode.h"
 #include "hal/adc_types.h"
+#include "modulation_spectrogram.h"
 #include "portmacro.h"
 #include "soc/soc_caps.h"
 #include "esp_log.h"
@@ -15,11 +16,14 @@
 #include "app.h"
 
 #define CONV_FRAME_SIZE 256
-#define MAX_BUF_SIZE 1024
 #define SAMPLE_FREQ 1024
+#define FFT_HOP 8
 
+__attribute__((aligned(16)))
 uint16_t ad8232_bufferA[MAX_BUF_SIZE];
+__attribute__((aligned(16)))
 uint16_t ad8232_bufferB[MAX_BUF_SIZE];
+
 TaskHandle_t ad8232_conv_done_handle;
 TaskHandle_t ad8232_process_samples_handle;
 
@@ -97,7 +101,7 @@ void ad8232_conv_done(void *params)
             ESP_LOGE("ad8232_conv_done", "Error parseando los datos del ADC");
             continue;
         }
-
+        
         for (uint16_t i = 0; i < out_lenght; i++) {
             sample += parsed_data[i].raw_data;
             cnt++;
@@ -110,12 +114,13 @@ void ad8232_conv_done(void *params)
             buffer[buffer_idx++] = sample;
             cnt = 0;
             sample = 0;
-            
+
             if (buffer_idx < MAX_BUF_SIZE) {
                 continue;
             }
 
             buffer_idx = 0;
+            
             //Esto debería despertar a la tarea de procesamiento
             xQueueSend(processing_buffers, &buffer, portMAX_DELAY);
             xQueueReceive(available_buffers, &buffer, portMAX_DELAY);
@@ -126,12 +131,16 @@ void ad8232_conv_done(void *params)
 void ad8232_process_samples(void *params)
 {
     uint16_t *buffer;
+
+    if (!fft_init()) {
+        vTaskDelete(NULL);
+    }
+
     while (1) {
         xQueueReceive(processing_buffers, &buffer, portMAX_DELAY);
-
-        for (int i = 0; i < MAX_BUF_SIZE; i++) {
-            printf("%d\n", buffer[i]);
-        }
+        
+        fft_spectrogram(buffer, MAX_BUF_SIZE);
+        
         xQueueSend(available_buffers, &buffer, portMAX_DELAY);
     }
 }
