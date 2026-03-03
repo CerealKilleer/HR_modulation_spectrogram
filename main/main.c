@@ -7,6 +7,7 @@
 
 void app_main(void)
 {
+    
     ad8232_t params = {
         .gpio = 4,
     };

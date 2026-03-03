@@ -3,59 +3,100 @@
 #include "dsps_wind_hann.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "freertos/idf_additions.h"
 #include "sdkconfig.h"
-#include "esp_dsp.h"
+#include "esp_heap_caps.h"
+#include <string.h>
 
 __attribute__((aligned(16)))
-float window[FFT_N_SAMPLES];
+uint16_t ad8232_bufferA[BUFFER_SIZE];
+
+__attribute__((aligned(16)))
+uint16_t ad8232_bufferB[BUFFER_SIZE];
+
+__attribute__((aligned(16)))
+float window[FFT_WIN_SIZE];
 
 __attribute__((aligned(16)))
 float y[FFT_N_SAMPLES * 2];
 
-__attribute__((aligned(16)))
-float spectrogram[N_FRAMES][FREQ_BINS];
+float (*spectrogram)[FREQ_BINS];
 
-static inline bool fft_execute(float *y);
+float y[FFT_N_SAMPLES * 2];
 
-bool fft_init(void)
+QueueHandle_t available_buffers, processing_buffers;
+
+static inline bool fft_execute(void);
+static bool fft_init(void);
+static bool fft_spectrogram(uint16_t *data_buffer, size_t buffer_len);
+
+void modulation_spectrogram_task(void *params)
 {
+    uint16_t *buffer;
+    extern TaskHandle_t tcp_client_handle;
+
+    if (!fft_init()) {
+        vTaskDelete(NULL);
+    }
+
+    while (1) {
+        xQueueReceive(processing_buffers, &buffer, portMAX_DELAY);
+        
+        fft_spectrogram(buffer, BUFFER_SIZE);
+        xTaskNotifyGive(tcp_client_handle);
+        xQueueSend(available_buffers, &buffer, portMAX_DELAY);
+    }
+}
+
+static bool fft_init(void)
+{
+    spectrogram = heap_caps_malloc((FFT_N_FRAMES) * sizeof(*spectrogram), MALLOC_CAP_SPIRAM);
+
+    if (spectrogram == NULL) {
+        ESP_LOGE("fft_spectrogram", "Error reservando PSRAM\n");
+        return false;
+    }
+
     esp_err_t ret = dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
 
     if (ret != ESP_OK) {
         ESP_LOGE("fft_spectrogram", "Error inicializando la tabla de coeficientes de la FFT. Codigo de error: %d\n", ret);
+        free(spectrogram);
         return false;
     }
 
-    dsps_wind_hann_f32(window, FFT_N_SAMPLES);
-
+    dsps_wind_hann_f32(window, FFT_WIN_SIZE);
     return true;
 }
 
-bool fft_spectrogram(uint16_t *data_buffer, size_t buffer_len)
+static bool fft_spectrogram(uint16_t *data_buffer, size_t buffer_len)
 {
     size_t j = 0;
     size_t k = 0;
     size_t frame = 0;
-    
-    for (size_t i = 0; i <= buffer_len - FFT_N_SAMPLES; i+= HOP) {
+
+    for (size_t i = 0; i <= buffer_len - FFT_WIN_SIZE; i+= FFT_HOP_SIZE) {
         float mean = 0.0;
         j = i;
         k = 0;
 
-        while (k < FFT_N_SAMPLES) {
+        memset(y, 0, sizeof(y));
+
+        while (k < FFT_WIN_SIZE) {
             mean += data_buffer[j + k];
             k++;
         }
-        mean /= FFT_N_SAMPLES;
+
+        mean /= FFT_WIN_SIZE;
         k = 0;
 
-        while (k < FFT_N_SAMPLES) {
+        while (k < FFT_WIN_SIZE) {
             y[2 * k] = (data_buffer[j + k] - mean)  * window[k];
             y[2 * k + 1] = 0;
             k++;
         }
 
-        if (!fft_execute(y)) {
+        if (!fft_execute()) {
             ESP_LOGE("fft_spectrogram", "Error calculando la FFT");
             return false;
         }
@@ -68,27 +109,11 @@ bool fft_spectrogram(uint16_t *data_buffer, size_t buffer_len)
 
         frame++;
     }
-    //Esto es para ir visualizando en el uart
-    printf("START\n");
-
-    for (size_t frame = 0; frame < N_FRAMES; frame++)
-    {
-        for (size_t bin = 0; bin < FREQ_BINS; bin++)
-        {
-            printf("%.6f", spectrogram[frame][bin]);
-
-            if (bin < FREQ_BINS - 1)
-                printf(" ");
-        }
-        printf("\n");
-    }
-
-    printf("END\n");
-
+    ESP_LOGI("fft_spectrogram", "Espectrograma generado\n");
     return true;
 }
 
-static inline bool fft_execute(float *y)
+static inline bool fft_execute(void)
 {
     esp_err_t ret;
     ret = dsps_fft2r_fc32(y, FFT_N_SAMPLES);

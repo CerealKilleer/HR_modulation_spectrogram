@@ -1,3 +1,6 @@
+#include "app.h"
+#include "wifi.h"
+#include "tcp_client.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -13,21 +16,10 @@
 #include "soc/soc_caps.h"
 #include "esp_log.h"
 #include <stdio.h>
-#include "app.h"
-
-#define CONV_FRAME_SIZE 256
-#define SAMPLE_FREQ 1024
-#define FFT_HOP 8
-
-__attribute__((aligned(16)))
-uint16_t ad8232_bufferA[MAX_BUF_SIZE];
-__attribute__((aligned(16)))
-uint16_t ad8232_bufferB[MAX_BUF_SIZE];
 
 TaskHandle_t ad8232_conv_done_handle;
 TaskHandle_t ad8232_process_samples_handle;
-
-QueueHandle_t available_buffers, processing_buffers;
+TaskHandle_t tcp_client_handle;
 
 void ad8232_conv_done(void *params);
 void ad8232_process_samples(void *params); 
@@ -41,13 +33,14 @@ static bool IRAM_ATTR s_conv_done_cb(adc_continuous_handle_t handle, const adc_c
 
 void ad8232_init(ad8232_t *params)
 {
+    wifi_init_sta();
     uint16_t *ptr;
     adc_continuous_params_t adc_continuous_params;
     adc_continuous_params.adc_gpio = params->gpio;
     adc_continuous_params.atten = ADC_ATTEN_DB_12;
     adc_continuous_params.bit_width = SOC_ADC_DIGI_MAX_BITWIDTH;
     adc_continuous_params.conv_frame_size = CONV_FRAME_SIZE;
-    adc_continuous_params.max_buf_size = MAX_BUF_SIZE;
+    adc_continuous_params.max_buf_size = BUFFER_SIZE;
     adc_continuous_params.sample_freq = SAMPLE_FREQ;
     adc_continuous_params.conv_mode = ADC_CONV_SINGLE_UNIT_1;
     adc_continuous_params.cbs.on_conv_done = s_conv_done_cb;
@@ -66,7 +59,8 @@ void ad8232_init(ad8232_t *params)
     xQueueSend(available_buffers, &ptr, 0);
 
     xTaskCreate(ad8232_conv_done, "ad8232_conv_done", 4096, params, 24, &ad8232_conv_done_handle);
-    xTaskCreate(ad8232_process_samples, "ad8232_process_samples", 4096, params, 23, &ad8232_process_samples_handle);
+    xTaskCreate(modulation_spectrogram_task, "modulation_spectrogram_task", 4096, params, 23, &ad8232_process_samples_handle);
+    xTaskCreate(tcp_client,"tcp_client", 4096, NULL, 22, &tcp_client_handle);
 
     adc_init(&adc_continuous_params);
     params->adc_handler = adc_continuous_params.adc_handler;
@@ -115,7 +109,7 @@ void ad8232_conv_done(void *params)
             cnt = 0;
             sample = 0;
 
-            if (buffer_idx < MAX_BUF_SIZE) {
+            if (buffer_idx < BUFFER_SIZE) {
                 continue;
             }
 
@@ -125,22 +119,5 @@ void ad8232_conv_done(void *params)
             xQueueSend(processing_buffers, &buffer, portMAX_DELAY);
             xQueueReceive(available_buffers, &buffer, portMAX_DELAY);
         }
-    }
-}
-
-void ad8232_process_samples(void *params)
-{
-    uint16_t *buffer;
-
-    if (!fft_init()) {
-        vTaskDelete(NULL);
-    }
-
-    while (1) {
-        xQueueReceive(processing_buffers, &buffer, portMAX_DELAY);
-        
-        fft_spectrogram(buffer, MAX_BUF_SIZE);
-        
-        xQueueSend(available_buffers, &buffer, portMAX_DELAY);
     }
 }
