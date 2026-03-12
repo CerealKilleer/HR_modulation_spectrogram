@@ -18,7 +18,7 @@
 #define HOST_PORT 1234
 const char *TAG = "tcp_client_task";
 
-extern float (*spectrogram)[257];
+extern float *spectrogram;
 
 static int tcp_client_init(void)
 {
@@ -58,11 +58,20 @@ void tcp_client(void *args)
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         for (int i = 0; i < 125; i++) {
-            int err = send(sock, spectrogram[i], 257 * sizeof(float), 0);
 
-            if (err < 0) {
-                ESP_LOGE(TAG, "No se pudo enviar los datos. Errno %d", errno);
-                break;
+            uint8_t *ptr = (uint8_t *)&spectrogram[i * 512];
+            int bytes_to_send = 257 * sizeof(float);
+
+            while (bytes_to_send > 0) {
+                int sent = send(sock, ptr, bytes_to_send, 0);
+
+                if (sent < 0) {
+                    ESP_LOGE(TAG, "Error enviando. Errno %d", errno);
+                    break;
+                }
+
+                ptr += sent;
+                bytes_to_send -= sent;
             }
         }
     }

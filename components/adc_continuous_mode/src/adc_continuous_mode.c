@@ -1,10 +1,15 @@
 #include "adc_continuous_mode.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_err.h"
+#include "esp_log.h"
 #include "hal/adc_types.h"
 
-void adc_init(adc_continuous_params_t *params)
+static const char *TAG = "adc_continuous";
+
+bool adc_init(adc_config_t *params)
 {
+    esp_err_t ret;
+
     adc_channel_t adc_channel;
     adc_unit_t adc_unit;
 
@@ -13,8 +18,19 @@ void adc_init(adc_continuous_params_t *params)
         .conv_frame_size = params->conv_frame_size
     };
 
-    ESP_ERROR_CHECK(adc_continuous_new_handle(&hdl_config, &params->adc_handler));
-    ESP_ERROR_CHECK(adc_continuous_io_to_channel(params->adc_gpio, &adc_unit, &adc_channel));
+    ret = adc_continuous_new_handle(&hdl_config, &params->adc_handler);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Error inicializando el ADC %d", ret);
+        goto exit_failure;
+    }
+
+    ret = adc_continuous_io_to_channel(params->adc_gpio, &adc_unit, &adc_channel);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Error inicializando el ADC %d", ret);
+        goto deinit;
+    }
     
     adc_continuous_config_t dig_cfg = {
         .sample_freq_hz = params->sample_freq,
@@ -30,7 +46,25 @@ void adc_init(adc_continuous_params_t *params)
     adc_pattern[0].bit_width = params->bit_width;
 
     dig_cfg.adc_pattern = adc_pattern;
-    ESP_ERROR_CHECK(adc_continuous_config(params->adc_handler, &dig_cfg));
-    ESP_ERROR_CHECK(adc_continuous_register_event_callbacks(params->adc_handler, &params->cbs, NULL));
-    ESP_ERROR_CHECK(adc_continuous_start(params->adc_handler));
+
+    ret = adc_continuous_config(params->adc_handler, &dig_cfg);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Error aplicando la configuración en el ADC %d", ret);
+        goto deinit;
+    }
+
+    ret = adc_continuous_register_event_callbacks(params->adc_handler, &params->cbs, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Error registrando el callback en el ADC %d", ret);
+        goto deinit;
+    }
+
+    return true;
+
+    deinit:
+        adc_continuous_deinit(params->adc_handler);
+
+    exit_failure:
+        return false;
 }

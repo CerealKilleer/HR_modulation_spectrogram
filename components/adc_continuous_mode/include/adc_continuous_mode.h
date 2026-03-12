@@ -14,13 +14,26 @@ typedef struct {
     uint8_t adc_gpio;
     uint8_t atten;
     uint8_t bit_width;
-} adc_continuous_params_t;
+} adc_config_t;
 
-void adc_init(adc_continuous_params_t *params);
+bool adc_init(adc_config_t *params);
 
 bool inline adc_read(adc_continuous_handle_t adc_handle, uint8_t *buffer, 
                     uint32_t lenght_max, uint32_t *out_lenght)
 {
     return (adc_continuous_read(adc_handle, buffer, lenght_max, out_lenght, 0) == ESP_OK);
 }
+
+bool inline adc_start(adc_continuous_handle_t adc_handle)
+{
+    esp_err_t ret;
+    ret = adc_continuous_start(adc_handle);
+    
+    if (ret != ESP_OK) {
+        return false;
+    }
+
+    return true;
+}
+
 #endif
