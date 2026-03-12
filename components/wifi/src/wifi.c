@@ -11,8 +11,8 @@
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
-#define SSID    "Flia_Lopez_Mejia"
-#define PASSWORD "normandiayalgora"
+#define SSID    "Sputnik"
+#define PASSWORD "Josiecore123"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  3
 
 static const char *TAG = "WiFi Station";
