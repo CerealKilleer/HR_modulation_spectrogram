@@ -6,15 +6,20 @@ import matplotlib.pyplot as plt
 # Parámetros físicos
 # ==============================
 
-FS = 256                 # Frecuencia de muestreo (Hz)
-DURATION = 4             # segundos
-N_SAMPLES = FS * DURATION
+FS = 256
 
-NFFT = 512               # porque FREQ_BINS = NFFT/2 + 1
-FREQ_BINS = NFFT // 2 + 1
-N_FRAMES = 125
+NFFT = 512
+FREQ_BINS = NFFT // 2 + 1        # 257
+MOD_BINS = FREQ_BINS             # 257 (FFT de modulación)
 
-FRAME_BYTES = FREQ_BINS * 4  # float32 = 4 bytes
+HOP = 8
+
+# Frecuencia de modulación
+FS_MOD = FS / HOP                # 32 Hz
+FM_MAX = FS_MOD / 2              # 16 Hz
+
+TOTAL_FLOATS = FREQ_BINS * MOD_BINS
+TOTAL_BYTES = TOTAL_FLOATS * 4   # float32
 
 HOST = "0.0.0.0"
 PORT = 1234
@@ -33,37 +38,36 @@ conn, addr = server.accept()
 print("Conectado desde", addr)
 
 # ==============================
-# Buffer del espectrograma
+# Recepción matriz completa
 # ==============================
 
-spec = np.zeros((N_FRAMES, FREQ_BINS), dtype=np.float32)
+data = b''
+while len(data) < TOTAL_BYTES:
+    packet = conn.recv(TOTAL_BYTES - len(data))
+    if not packet:
+        raise RuntimeError("Conexión cerrada inesperadamente")
+    data += packet
 
-# ==============================
-# Recepción frame por frame
-# ==============================
+mod_spec = np.frombuffer(data, dtype=np.float32)
+mod_spec = mod_spec.reshape(FREQ_BINS, MOD_BINS)
 
-for frame in range(N_FRAMES):
-
-    data = b''
-    while len(data) < FRAME_BYTES:
-        packet = conn.recv(FRAME_BYTES - len(data))
-        if not packet:
-            raise RuntimeError("Conexión cerrada inesperadamente")
-        data += packet
-
-    spec[frame, :] = np.frombuffer(data, dtype=np.float32)
-
-print("Espectrograma recibido correctamente")
+print("Espectrograma de modulación recibido")
 
 conn.close()
 server.close()
 
 # ==============================
-# Construcción de ejes físicos
+# Ejes físicos
 # ==============================
 
-freq_axis = np.linspace(0, FS/2, FREQ_BINS)
-time_axis = np.linspace(0, DURATION, N_FRAMES)
+freq_axis = np.linspace(0, FS/2, FREQ_BINS)     # 0–128 Hz
+fm_axis = np.linspace(0, FM_MAX, MOD_BINS)      # 0–16 Hz
+
+# ==============================
+# Escala log (CRÍTICO)
+# ==============================
+
+mod_spec_db = 10 * np.log10(mod_spec + 1e-12)
 
 # ==============================
 # Visualización
@@ -72,15 +76,17 @@ time_axis = np.linspace(0, DURATION, N_FRAMES)
 plt.figure(figsize=(8, 5))
 
 plt.imshow(
-    spec.T,
+    mod_spec_db,
     aspect='auto',
     origin='lower',
-    extent=[0, DURATION, 0, FS/2]
+    extent=[fm_axis[0], fm_axis[-1], freq_axis[0], freq_axis[-1]],
+    cmap='jet'
 )
 
-plt.xlabel("Tiempo (s)")
+plt.xlabel("Frecuencia de modulación (Hz)")
 plt.ylabel("Frecuencia (Hz)")
-plt.colorbar(label="Magnitud")
-plt.title("Espectrograma recibido por TCP")
+plt.title("Espectrograma de modulación")
+plt.colorbar(label="Energía (dB)")
+
 plt.tight_layout()
 plt.show()

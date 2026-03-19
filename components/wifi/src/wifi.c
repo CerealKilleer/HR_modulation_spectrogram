@@ -11,8 +11,8 @@
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
-#define SSID    "Sputnik"
-#define PASSWORD "Josiecore123"
+#define SSID    "IoT"
+#define PASSWORD "iot2025-"
 #define EXAMPLE_ESP_MAXIMUM_RETRY  3
 
 static const char *TAG = "WiFi Station";

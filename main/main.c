@@ -17,7 +17,8 @@ TaskHandle_t tcp_client_handle;
 static const char *TAG = "app";
 
 TaskHandle_t app_ad8232_handle;
-TaskHandle_t app_process_handle;
+TaskHandle_t app_do_spectrogram_handle;
+TaskHandle_t app_do_mod_spectrogram_handle;
 TaskHandle_t wifi_handle;
 adc_continuous_handle_t adc_handle;
 QueueHandle_t available_buffer;
@@ -34,9 +35,13 @@ __attribute__((aligned(16)))
 float window[FFT_WIN_SIZE];
 
 __attribute__((aligned(16)))
+float mod_spec_window[FFT_MOD_SPEC_WIN_SIZE];
+
+__attribute__((aligned(16)))
 float y[FFT_N_SAMPLES * 2];
 
 float *spectrogram;
+float *mod_spectrogram;
 
 static bool IRAM_ATTR conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
 {
@@ -99,7 +104,7 @@ static bool app_init_queues(void)
     return true;
 }
 
-void app_process_samples(void *params)
+void app_do_spectrogram(void *params)
 {
     uint16_t *buffer;
     spectrogram_t spec_params = {
@@ -127,14 +132,43 @@ void app_process_samples(void *params)
 
         spec_params.buffer = buffer;
         fft_spectrogram(&spec_params);
-        
-        xTaskNotifyGive(tcp_client_handle);
+
+        xTaskNotifyGive(app_do_mod_spectrogram_handle);
 
         if (xQueueSend(available_buffer, (void *)&buffer, portMAX_DELAY) != pdTRUE) {
             ESP_LOGE(TAG, "No se pudo enviar el buffer a procesamiento");
         }
     }
 }
+
+void app_do_mod_spectrogram(void *params)
+{
+    modulation_spectrogram_t mod_spec = {
+        .spectrogram = spectrogram,
+        .window = mod_spec_window,
+        .y = y,
+        .spectrogram_n_frames = FFT_N_FRAMES,
+        .spectrogram_freq_bins = FREQ_BINS,
+        .fft_win_size = FFT_MOD_SPEC_WIN_SIZE,
+        .fft_hop = FFT_MOD_SPEC_HOP_SIZE,
+        .fft_freq_bins = FFT_MOD_SPEC_FREQ_BINS,
+        .fft_n_samples = FFT_N_SAMPLES
+    };
+
+    if (!fft_mod_spec_init(&mod_spec)) {
+        ESP_LOGE(TAG, "No se pudo crear la fft");
+        vTaskDelete(NULL);
+    }
+
+    mod_spectrogram = mod_spec.mod_spectrogram;
+
+    while(true) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        fft_modulation_spectrogram(&mod_spec);
+        xTaskNotifyGive(tcp_client_handle);
+    }
+}
+
 
 void app_ad8232_task(void *params) 
 {
@@ -200,10 +234,16 @@ void app_main(void)
         vTaskDelete(NULL);
     }
     
-    if (xTaskCreate(app_process_samples, "app_process_samples", 4096, NULL, 23, &app_process_handle) != pdTRUE) {
-        ESP_LOGE(TAG, "Error al crear la tarea para el procesamiento de datos");
+    if (xTaskCreate(app_do_spectrogram, "app_do_spectrogram", 4096, NULL, 23, &app_do_spectrogram_handle) != pdTRUE) {
+        ESP_LOGE(TAG, "Error al crear la tarea para generar los espectrogramas");
         vTaskDelete(NULL);
     }
+
+    if (xTaskCreate(app_do_mod_spectrogram, "app_do_mod_spectrogram", 4096, NULL, 23, &app_do_mod_spectrogram_handle) != pdTRUE) {
+        ESP_LOGE(TAG, "Error al crear la tarea para generar los espectrogramas");
+        vTaskDelete(NULL);
+    }
+
 
     xTaskCreate(tcp_client,"tcp_client", 4096, spectrogram, 22, &tcp_client_handle);
     
