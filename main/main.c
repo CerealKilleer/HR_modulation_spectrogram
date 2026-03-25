@@ -20,6 +20,7 @@ TaskHandle_t app_ad8232_handle;
 TaskHandle_t app_do_spectrogram_handle;
 TaskHandle_t app_do_mod_spectrogram_handle;
 TaskHandle_t wifi_handle;
+TaskHandle_t app_calc_hr_handle;
 adc_continuous_handle_t adc_handle;
 QueueHandle_t available_buffer;
 QueueHandle_t processing_buffer;
@@ -39,6 +40,9 @@ float mod_spec_window[FFT_MOD_SPEC_WIN_SIZE];
 
 __attribute__((aligned(16)))
 float y[FFT_N_SAMPLES * 2];
+
+__attribute__((aligned(16)))
+float y_mod[FFT_MOD_SPEC_N_SAMPLES * 2];
 
 float *spectrogram;
 float *mod_spectrogram;
@@ -146,13 +150,13 @@ void app_do_mod_spectrogram(void *params)
     modulation_spectrogram_t mod_spec = {
         .spectrogram = spectrogram,
         .window = mod_spec_window,
-        .y = y,
+        .y = y_mod,
         .spectrogram_n_frames = FFT_N_FRAMES,
         .spectrogram_freq_bins = FREQ_BINS,
         .fft_win_size = FFT_MOD_SPEC_WIN_SIZE,
         .fft_hop = FFT_MOD_SPEC_HOP_SIZE,
         .fft_freq_bins = FFT_MOD_SPEC_FREQ_BINS,
-        .fft_n_samples = FFT_N_SAMPLES
+        .fft_n_samples = FFT_MOD_SPEC_N_SAMPLES
     };
 
     if (!fft_mod_spec_init(&mod_spec)) {
@@ -165,10 +169,31 @@ void app_do_mod_spectrogram(void *params)
     while(true) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         fft_modulation_spectrogram(&mod_spec);
-        xTaskNotifyGive(tcp_client_handle);
+        xTaskNotifyGive(app_calc_hr_handle);
     }
 }
 
+void app_calc_hr(void *params) {
+
+    float spectrogram_freq_res = ((float) SIGNAL_SAMPLE_FREQ) / FFT_N_SAMPLES;
+    float mod_spec_res = ((float) SIGNAL_SAMPLE_FREQ) / FFT_HOP_SIZE / FFT_MOD_SPEC_N_SAMPLES;
+
+    hr_t hr_params = {
+        .mod_spectrogram = mod_spectrogram,
+        .mod_freq_res = mod_spec_res,
+        .mod_freq_low_sample = MIN_MOD_SPEC_FREQ / mod_spec_res,
+        .mod_freq_high_sample = MAX_MOD_SPEC_FREQ / mod_spec_res + 1,
+        .signal_freq_high_sample = (MAX_SIGNAL_FREQ / spectrogram_freq_res + 1),
+        .signal_freq_low_sample = (MIN_SIGNAL_FREQ / spectrogram_freq_res)
+    };
+
+    while (true) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        float hr = get_hr(&hr_params);
+        ESP_LOGI(TAG, "HR: %.2f", hr);
+        xTaskNotifyGive(tcp_client_handle);
+    }
+}
 
 void app_ad8232_task(void *params) 
 {
@@ -244,6 +269,10 @@ void app_main(void)
         vTaskDelete(NULL);
     }
 
+    if (xTaskCreate(app_calc_hr, "app_calc_hr", 4096, NULL, 23, &app_calc_hr_handle) != pdTRUE) {
+        ESP_LOGE(TAG, "Error al crear la tarea para calcular el ritmo cardiaco");
+        vTaskDelete(NULL);
+    }
 
     xTaskCreate(tcp_client,"tcp_client", 4096, spectrogram, 22, &tcp_client_handle);
     

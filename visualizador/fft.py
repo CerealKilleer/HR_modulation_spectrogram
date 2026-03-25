@@ -9,17 +9,16 @@ import matplotlib.pyplot as plt
 FS = 256
 
 NFFT = 512
-FREQ_BINS = NFFT // 2 + 1        # 257
-MOD_BINS = FREQ_BINS             # 257 (FFT de modulación)
+FREQ_BINS = NFFT // 2 + 1
+MOD_BINS = FREQ_BINS
 
 HOP = 8
 
-# Frecuencia de modulación
-FS_MOD = FS / HOP                # 32 Hz
-FM_MAX = FS_MOD / 2              # 16 Hz
+FS_MOD = FS / HOP
+FM_MAX = FS_MOD / 2
 
 TOTAL_FLOATS = FREQ_BINS * MOD_BINS
-TOTAL_BYTES = TOTAL_FLOATS * 4   # float32
+TOTAL_BYTES = TOTAL_FLOATS * 4
 
 HOST = "0.0.0.0"
 PORT = 1234
@@ -38,55 +37,60 @@ conn, addr = server.accept()
 print("Conectado desde", addr)
 
 # ==============================
-# Recepción matriz completa
+# Ejes
 # ==============================
 
-data = b''
-while len(data) < TOTAL_BYTES:
-    packet = conn.recv(TOTAL_BYTES - len(data))
-    if not packet:
-        raise RuntimeError("Conexión cerrada inesperadamente")
-    data += packet
-
-mod_spec = np.frombuffer(data, dtype=np.float32)
-mod_spec = mod_spec.reshape(FREQ_BINS, MOD_BINS)
-
-print("Espectrograma de modulación recibido")
-
-conn.close()
-server.close()
+freq_axis = np.linspace(0, FS/2, FREQ_BINS)
+fm_axis = np.linspace(0, FM_MAX, MOD_BINS)
 
 # ==============================
-# Ejes físicos
+# Inicializar gráfico
 # ==============================
 
-freq_axis = np.linspace(0, FS/2, FREQ_BINS)     # 0–128 Hz
-fm_axis = np.linspace(0, FM_MAX, MOD_BINS)      # 0–16 Hz
+plt.ion()  # 🔥 modo interactivo
 
-# ==============================
-# Escala log (CRÍTICO)
-# ==============================
+fig, ax = plt.subplots(figsize=(8, 5))
 
-mod_spec_db = 10 * np.log10(mod_spec + 1e-12)
+# imagen inicial vacía
+mod_spec_db = np.zeros((FREQ_BINS, MOD_BINS))
 
-# ==============================
-# Visualización
-# ==============================
-
-plt.figure(figsize=(8, 5))
-
-plt.imshow(
+img = ax.imshow(
     mod_spec_db,
     aspect='auto',
     origin='lower',
     extent=[fm_axis[0], fm_axis[-1], freq_axis[0], freq_axis[-1]],
-    cmap='jet'
+    cmap='jet',
+    vmin=-40,
+    vmax=0
 )
 
-plt.xlabel("Frecuencia de modulación (Hz)")
-plt.ylabel("Frecuencia (Hz)")
-plt.title("Espectrograma de modulación")
-plt.colorbar(label="Energía (dB)")
+plt.colorbar(img, ax=ax, label="Energía (dB)")
+ax.set_xlabel("Frecuencia de modulación (Hz)")
+ax.set_ylabel("Frecuencia (Hz)")
+ax.set_title("Espectrograma de modulación (streaming)")
 
 plt.tight_layout()
-plt.show()
+
+# ==============================
+# Loop continuo
+# ==============================
+
+while True:
+    data = b''
+    while len(data) < TOTAL_BYTES:
+        packet = conn.recv(TOTAL_BYTES - len(data))
+        if not packet:
+            raise RuntimeError("Conexión cerrada")
+        data += packet
+
+    mod_spec = np.frombuffer(data, dtype=np.float32)
+    mod_spec = mod_spec.reshape(FREQ_BINS, MOD_BINS)
+
+    # log + normalización
+    mod_spec_db = 10 * np.log10(mod_spec + 1e-12)
+    mod_spec_db -= np.max(mod_spec_db)
+
+    # 🔥 actualizar imagen
+    img.set_data(mod_spec_db)
+
+    plt.pause(0.001)  # refresco

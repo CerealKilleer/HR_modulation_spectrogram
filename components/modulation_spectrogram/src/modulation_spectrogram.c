@@ -1,6 +1,7 @@
 #include "modulation_spectrogram.h"
 #include "dsps_fft2r.h"
 #include "dsps_wind_hann.h"
+#include "dsps_wind_blackman.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -49,14 +50,14 @@ bool fft_mod_spec_init(modulation_spectrogram_t *params)
         return false;
     }
 
-    dsps_wind_hann_f32(params->window, params->fft_win_size);
+    dsps_wind_blackman_f32(params->window, params->fft_win_size);
     return true;
 }
 
 bool fft_modulation_spectrogram(modulation_spectrogram_t *params)
 {
     size_t spectrogram_n_frames = params->spectrogram_n_frames;
-    size_t spectrogram_freq_bins = params->fft_freq_bins; 
+    size_t spectrogram_freq_bins = params->spectrogram_freq_bins; 
     uint32_t fft_n_samples = params->fft_n_samples;
     uint32_t fft_freq_bins = params->fft_freq_bins;
     float *spectrogram = params->spectrogram;
@@ -71,7 +72,6 @@ bool fft_modulation_spectrogram(modulation_spectrogram_t *params)
             float sample = spectrogram[i + j * spectrogram_freq_bins];
             mean += sample;
             params->y[2*k] = sample;
-            params->y[2*k + 1] = 0.0;
             k++;
         }
 
@@ -189,4 +189,49 @@ static bool fft_execute(float *y, size_t fft_n_samples)
     }
 
     return true;
+}
+
+float get_hr(hr_t *hr_params)
+{
+    float *mod_spec = hr_params->mod_spectrogram;
+    static float prev_hr = 0.0;
+    size_t f_max = hr_params->signal_freq_high_sample;
+    size_t f_min = hr_params->signal_freq_low_sample;
+    size_t fm_low = hr_params->mod_freq_low_sample;
+    size_t fm_high = hr_params->mod_freq_high_sample;
+
+    float max_energy = -1.0f;
+    size_t best_fm_idx = 0;
+
+    for (size_t j = fm_low; j <= fm_high; j++) {
+
+        float energy_sum = 0.0f;
+
+        for (size_t i = f_min; i < f_max; i++) {
+
+            float local = 0.0f;
+            for (int k = -1; k <= 1; k++) {
+                local += mod_spec[i * 257 + (j + k)];
+            }
+
+            energy_sum += local / 3.0f;
+        }
+
+        energy_sum /= (f_max - f_min);
+
+        //float fm = hr_params->mod_freq_res * j;
+        //energy_sum /= (1.0f + fm);
+
+        if (energy_sum > max_energy) {
+            max_energy = energy_sum;
+            best_fm_idx = j;
+        }
+    }
+
+    float hr_raw = 60.0f * (hr_params->mod_freq_res * best_fm_idx);
+
+    float hr = 0.85f * prev_hr + 0.15f * hr_raw;
+    prev_hr = hr;
+
+    return hr;
 }

@@ -30,9 +30,18 @@ typedef struct {
     uint32_t fft_n_samples;
 } modulation_spectrogram_t;
 
+typedef struct {
+    float *mod_spectrogram;
+    float mod_freq_res;
+    int mod_freq_low_sample;
+    int mod_freq_high_sample;
+    int signal_freq_high_sample;
+    int signal_freq_low_sample;
+} hr_t;
+
 bool fft_init(spectrogram_t *params);
 bool fft_spectrogram(spectrogram_t *params);
 bool fft_mod_spec_init(modulation_spectrogram_t *params);
 bool fft_modulation_spectrogram(modulation_spectrogram_t *params);
-
+float get_hr(hr_t *hr_params);
 #endif
