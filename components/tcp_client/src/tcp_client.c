@@ -16,7 +16,7 @@
 
 #define HOST_IP "192.168.88.196"
 #define HOST_PORT 1234
-const char *TAG = "tcp_client_task";
+static const char *TAG = "tcp_client_task";
 
 extern float *mod_spectrogram;
 

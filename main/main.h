@@ -21,8 +21,8 @@
 #define FFT_MOD_SPEC_FREQ_BINS ((FFT_MOD_SPEC_N_SAMPLES / 2) + 1)
 
 //HR freq limits
-#define MAX_SIGNAL_FREQ 20
-#define MIN_SIGNAL_FREQ 5
+#define MAX_SIGNAL_FREQ 40
+#define MIN_SIGNAL_FREQ 0
 #define MIN_MOD_SPEC_FREQ 0.8
 #define MAX_MOD_SPEC_FREQ 3.3
-#endif
+#endif 

@@ -9,13 +9,13 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "portmacro.h"
-
-//Pruebas
+#include "spec_mqtt_client.h"
 #include "tcp_client.h"
-TaskHandle_t tcp_client_handle;
 
 static const char *TAG = "app";
 
+TaskHandle_t tcp_client_handle;
+TaskHandle_t mqtt_client_handle;
 TaskHandle_t app_ad8232_handle;
 TaskHandle_t app_do_spectrogram_handle;
 TaskHandle_t app_do_mod_spectrogram_handle;
@@ -24,7 +24,7 @@ TaskHandle_t app_calc_hr_handle;
 adc_continuous_handle_t adc_handle;
 QueueHandle_t available_buffer;
 QueueHandle_t processing_buffer;
-
+QueueHandle_t hr_buffer;
 
 __attribute__((aligned(16)))
 uint16_t ad8232_bufferA[BUFFER_SIZE];
@@ -93,6 +93,15 @@ static bool app_init_queues(void)
         return false;
     }
 
+    hr_buffer = xQueueCreate(1, sizeof(float));
+
+    if (hr_buffer == NULL) {
+        vQueueDelete(available_buffer);
+        vQueueDelete(processing_buffer);
+        ESP_LOGE(TAG, "Error creando la cola de ritmo cardiaco");
+        return false;
+    }
+
     buffer_ptr = ad8232_bufferA;
     if (xQueueSend(available_buffer, (void *)&buffer_ptr, portMAX_DELAY) != pdTRUE) {
         ESP_LOGE(TAG, "Error inicializando la cola de buffers disponibles.");
@@ -104,6 +113,7 @@ static bool app_init_queues(void)
         ESP_LOGE(TAG, "Error inicializando la cola de buffers disponibles.");
         return false;
     }
+
 
     return true;
 }
@@ -190,8 +200,7 @@ void app_calc_hr(void *params) {
     while (true) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         float hr = get_hr(&hr_params);
-        ESP_LOGI(TAG, "HR: %.2f", hr);
-        xTaskNotifyGive(tcp_client_handle);
+        xQueueSend(hr_buffer, (void *)&hr, portMAX_DELAY);
     }
 }
 
@@ -241,6 +250,18 @@ void app_ad8232_task(void *params)
     }
 }
 
+void app_mqtt_client(void *params)
+{
+    mqtt_client_init();
+    float hr;
+
+    for (;;) {
+        xQueueReceive(hr_buffer, (void *)&hr, portMAX_DELAY);
+        mqtt_client_publish_hr(hr);
+        //xTaskNotifyGive(tcp_client_handle);
+    }
+}
+
 void app_main(void)
 {
     wifi_init_sta();
@@ -274,8 +295,12 @@ void app_main(void)
         vTaskDelete(NULL);
     }
 
-    xTaskCreate(tcp_client,"tcp_client", 4096, spectrogram, 22, &tcp_client_handle);
+    if (xTaskCreate(app_mqtt_client,"mqtt_client", 4096, NULL, 22, &mqtt_client_handle) != pdTRUE) {
+        ESP_LOGE(TAG, "Error al crear la tarea del cliente mqtt");
+        vTaskDelete(NULL);
+    }
     
+    xTaskCreate(tcp_client,"tcp_client", 4096, NULL, 22, &tcp_client_handle);
     ad8232_adc_start(adc_handle);
 
     while (1) {
