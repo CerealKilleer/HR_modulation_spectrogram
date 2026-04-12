@@ -5,6 +5,7 @@
 #include "wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
+#include "freertos/semphr.h"
 #include "freertos/projdefs.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -46,6 +47,8 @@ float y_mod[FFT_MOD_SPEC_N_SAMPLES * 2];
 
 float *spectrogram;
 float *mod_spectrogram;
+uint16_t mqtt_buffer[MQTT_BUFFER_SIZE];
+SemaphoreHandle_t mqtt_buffer_mutex;
 
 static bool IRAM_ATTR conv_done_cb(adc_continuous_handle_t handle, const adc_continuous_evt_data_t *edata, void *user_data)
 {
@@ -201,6 +204,7 @@ void app_calc_hr(void *params) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         float hr = get_hr(&hr_params);
         xQueueSend(hr_buffer, (void *)&hr, portMAX_DELAY);
+        xTaskNotify(mqtt_client_handle, 0x02, eSetBits);
     }
 }
 
@@ -213,11 +217,13 @@ void app_ad8232_task(void *params)
     adc_continuous_data_t parsed_data[CONV_FRAME_SIZE / SOC_ADC_DIGI_RESULT_BYTES];
 
     ad8232_adc_samples_t adc_samples = {
+        .mqtt_buffer = mqtt_buffer,
         .conv_frame = conv_frame,
         .parsed_data = parsed_data,
         .buffer_size = BUFFER_SIZE,
         .conv_frame_size = CONV_FRAME_SIZE,
-        .oversampling = ADC_OVERSAMPLING
+        .oversampling = ADC_OVERSAMPLING,
+        .mqtt_buffer_ready = false,
     };
 
     adc_samples.adc_handle = adc_handle;
@@ -229,15 +235,20 @@ void app_ad8232_task(void *params)
 
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        
+        xSemaphoreTake(mqtt_buffer_mutex, portMAX_DELAY);
         adc_samples.buffer = buffer;
-
         ret = ad8232_get_samples(&adc_samples);
+        xSemaphoreGive(mqtt_buffer_mutex);
+        if (adc_samples.mqtt_buffer_ready) {
+            ESP_LOGI(TAG, "Notificando");
+            xTaskNotify(mqtt_client_handle, 0x01, eSetBits);
+            adc_samples.mqtt_buffer_ready = false;
+        }
         
         if (ret != 0) {
             continue;
         }
-
+        
         ESP_LOGI(TAG, "Buffer generado");
 
         if (xQueueSend(processing_buffer, (void *)&buffer, portMAX_DELAY) != pdTRUE) {
@@ -256,8 +267,16 @@ void app_mqtt_client(void *params)
     float hr;
 
     for (;;) {
-        xQueueReceive(hr_buffer, (void *)&hr, portMAX_DELAY);
-        mqtt_client_publish_hr(hr);
+        uint32_t notify_value = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (notify_value & 0x01) {
+            xSemaphoreTake(mqtt_buffer_mutex, portMAX_DELAY);
+            mqtt_client_publish_ecg(mqtt_buffer, MQTT_BUFFER_SIZE);
+            xSemaphoreGive(mqtt_buffer_mutex);
+        } else if (notify_value & 0x02) {
+            xQueueReceive(hr_buffer, (void *)&hr, portMAX_DELAY);
+            mqtt_client_publish_hr(hr);
+        }
+        
         //xTaskNotifyGive(tcp_client_handle);
     }
 }
@@ -300,7 +319,14 @@ void app_main(void)
         vTaskDelete(NULL);
     }
     
-    xTaskCreate(tcp_client,"tcp_client", 4096, NULL, 22, &tcp_client_handle);
+    //xTaskCreate(tcp_client,"tcp_client", 4096, NULL, 22, &tcp_client_handle);
+    mqtt_buffer_mutex = xSemaphoreCreateMutex();
+
+    if (mqtt_buffer_mutex == NULL) {
+        ESP_LOGE(TAG, "Error al crear el mutex del buffer MQTT");
+    
+    }
+
     ad8232_adc_start(adc_handle);
 
     while (1) {

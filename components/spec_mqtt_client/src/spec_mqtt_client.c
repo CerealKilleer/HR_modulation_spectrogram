@@ -5,6 +5,7 @@
 #include <string.h>
 
 #define MQTT_TOPIC "/hr"
+#define MQTT_ECG_TOPIC "/ECG"
 esp_mqtt_client_handle_t client;
 static const char *TAG = "MQTT_CLIENT";
 
@@ -37,6 +38,12 @@ void mqtt_client_publish_hr(float hr)
     char msg[10];
     int len = snprintf(msg, 10, "%.2f", hr);
     esp_mqtt_client_enqueue(client, MQTT_TOPIC, msg, len, 1, 0, true);
+}
+
+void mqtt_client_publish_ecg(uint16_t *ecg_buffer, uint8_t size)
+{
+    const char *data = (char *)ecg_buffer;
+    esp_mqtt_client_enqueue(client, MQTT_ECG_TOPIC, data, sizeof(uint16_t)*size, 1, 0, false);
 }
 
 void mqtt_client_init()

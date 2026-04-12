@@ -15,6 +15,7 @@ bool ad8232_init(ad8232_adc_config_t *params)
 int ad8232_get_samples(ad8232_adc_samples_t *adc_samples)
 {
     static uint16_t buffer_idx = 0;
+    static uint8_t mqtt_buffer_idx = 0;
     const uint32_t buffer_size = adc_samples->buffer_size;
     const uint32_t conv_frame_size = adc_samples->conv_frame_size;
     const uint8_t oversampling_value = adc_samples->oversampling;
@@ -25,6 +26,7 @@ int ad8232_get_samples(ad8232_adc_samples_t *adc_samples)
     uint8_t *conv_frame = adc_samples->conv_frame;
     adc_continuous_data_t *parsed_data = adc_samples->parsed_data;
     uint16_t *buffer = adc_samples->buffer;
+    uint16_t *mqtt_buffer = adc_samples->mqtt_buffer;
 
     if (!adc_read(adc_samples->adc_handle, conv_frame, conv_frame_size, &read_data_lenght)) {
         ESP_LOGI(TAG, "La conversion del frame ha fallado");
@@ -41,11 +43,19 @@ int ad8232_get_samples(ad8232_adc_samples_t *adc_samples)
         sample += parsed_data[i].raw_data;
         cnt++;
             
-        if (cnt == oversampling_value) {
-            sample = sample / oversampling_value;
-            buffer[buffer_idx++] = sample;
-            cnt = 0;
-            sample = 0;
+        if (cnt != oversampling_value) {
+            continue;
+        }
+
+        sample = sample / oversampling_value;
+        buffer[buffer_idx++] = sample;
+        mqtt_buffer[mqtt_buffer_idx++] = sample;
+        cnt = 0;
+        sample = 0;
+
+        if (mqtt_buffer_idx == MQTT_BUFFER_SIZE) {
+            mqtt_buffer_idx = 0;
+            adc_samples->mqtt_buffer_ready = true;
         }
 
         if (buffer_idx == buffer_size) {
