@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Monitor Cardíaco</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f0f0f;
+      color: #f0f0f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2rem;
+      width: 100%;
+      max-width: 700px;
+    }
+
+    #status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #888;
+    }
+
+    #status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #555;
+      transition: background 0.4s;
+    }
+    #status-dot.connected { background: #639922; }
+    #status-dot.error     { background: #E24B4A; }
+
+    #hr-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    #heart-icon {
+      width: 80px;
+      height: 80px;
+      transform-origin: center;
+    }
+    #heart-icon.beat {
+      animation: heartbeat 0.55s ease-out;
+    }
+    @keyframes heartbeat {
+      0%   { transform: scale(1); }
+      20%  { transform: scale(1.28); }
+      40%  { transform: scale(1.1); }
+      60%  { transform: scale(1.22); }
+      80%  { transform: scale(1.05); }
+      100% { transform: scale(1); }
+    }
+
+    #bpm-value {
+      font-size: 88px;
+      font-weight: 500;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -2px;
+    }
+
+    #bpm-label {
+      font-size: 14px;
+      color: #888;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+
+    #zone-badge {
+      padding: 4px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      background: #1e1e1e;
+      color: #888;
+      border: 0.5px solid #333;
+      transition: background 0.4s, color 0.4s, border-color 0.4s;
+    }
+
+    #bpm-compare {
+      display: flex;
+      gap: 2rem;
+      align-items: center;
+      margin-top: 0.25rem;
+    }
+
+    .bpm-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .bpm-col-label {
+      font-size: 12px;
+      color: #888;
+      letter-spacing: 2px;
+    }
+
+    .bpm-col-value {
+      font-size: 32px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bpm-divider {
+      width: 0.5px;
+      height: 40px;
+      background: #333;
+    }
+
+    #ecg-section {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    #ecg-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #888;
+      padding: 0 4px;
+    }
+
+    #ecg-canvas {
+      width: 100%;
+      height: 180px;
+      background: #111;
+      border: 0.5px solid #2a2a2a;
+      border-radius: 8px;
+      display: block;
+    }
+
+    #config-panel {
+      width: 100%;
+      background: #1a1a1a;
+      border: 0.5px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+    }
+
+    .cfg-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    .cfg-row:last-of-type { margin-bottom: 0; }
+
+    .cfg-row label {
+      font-size: 12px;
+      color: #888;
+    }
+
+    .cfg-row input {
+      background: #111;
+      border: 0.5px solid #333;
+      border-radius: 6px;
+      color: #f0f0f0;
+      font-size: 14px;
+      padding: 8px 10px;
+      outline: none;
+      width: 100%;
+    }
+    .cfg-row input:focus { border-color: #555; }
+
+    #connect-btn {
+      width: 100%;
+      margin-top: 1rem;
+      padding: 9px;
+      font-size: 14px;
+      background: transparent;
+      border: 0.5px solid #444;
+      border-radius: 6px;
+      color: #f0f0f0;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #connect-btn:hover { background: #222; }
+
+    #error-msg {
+      margin-top: 0.75rem;
+      font-size: 12px;
+      color: #E24B4A;
+      min-height: 16px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="status-bar">
+    <div id="status-dot"></div>
+    <span id="status-text">Desconectado</span>
+  </div>
+
+  <div id="hr-section">
+    <svg id="heart-icon" viewBox="0 0 100 90" xmlns="http://www.w3.org/2000/svg">
+      <path id="heart-path"
+        d="M50 85 C50 85 5 55 5 28 C5 14 16 5 28 5 C37 5 45 10 50 18 C55 10 63 5 72 5 C84 5 95 14 95 28 C95 55 50 85 50 85 Z"
+        fill="#E24B4A"/>
+    </svg>
+    <div id="bpm-value">--</div>
+    <div id="bpm-label">BPM</div>
+    <div id="zone-badge">Esperando datos</div>
+    <div id="bpm-compare">
+      <div class="bpm-col">
+        <span class="bpm-col-label">MICRO</span>
+        <span id="bpm-micro" class="bpm-col-value">--</span>
+      </div>
+      <div class="bpm-divider"></div>
+      <div class="bpm-col">
+        <span class="bpm-col-label">PT</span>
+        <span id="bpm-pt" class="bpm-col-value">--</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="ecg-section">
+    <div id="ecg-header">
+      <span>ECG</span>
+      <span id="ecg-voltage">-- V</span>
+    </div>
+    <canvas id="ecg-canvas"></canvas>
+  </div>
+
+  <div id="config-panel">
+    <div class="cfg-row">
+      <label>Host del broker</label>
+      <input type="text" id="cfg-host" value="192.168.88.196" />
+    </div>
+    <div class="cfg-row">
+      <label>Usuario</label>
+      <input type="text" id="cfg-user" value="Yonathan" />
+    </div>
+    <div class="cfg-row">
+      <label>Contraseña</label>
+      <input type="password" id="cfg-pass" value="Celeste246/" />
+    </div>
+    <button id="connect-btn">Conectar</button>
+    <div id="error-msg"></div>
+  </div>
+</div>
+
+<script src="/mqtt.min.js"></script>
+<script>
+  const TOTAL_SAMPLES = 1024;
+  const ADC_MAX = 4095;
+  const VREF = 3.3;
+
+  let ecgBuffer = new Float32Array(TOTAL_SAMPLES);
+  let bufferFull = false;
+  let writeIndex = 0;
+  let client = null;
+  let animFrame = null;
+
+  const canvas     = document.getElementById('ecg-canvas');
+  const ctx        = canvas.getContext('2d');
+  const statusDot  = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+  const bpmValue   = document.getElementById('bpm-value');
+  const heartIcon  = document.getElementById('heart-icon');
+  const heartPath  = document.getElementById('heart-path');
+  const zoneBadge  = document.getElementById('zone-badge');
+  const errorMsg   = document.getElementById('error-msg');
+  const connectBtn = document.getElementById('connect-btn');
+  const ecgVoltage = document.getElementById('ecg-voltage');
+  const bpmMicro   = document.getElementById('bpm-micro');
+  const bpmPt      = document.getElementById('bpm-pt');
+
+  function resizeCanvas() {
+    canvas.width  = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  function setStatus(state, msg) {
+    statusDot.className = state;
+    statusText.textContent = msg;
+  }
+
+  function getZone(bpm) {
+    if (bpm < 60)  return { label: 'Reposo',   bg: '#0f1f0a', color: '#7ab648', border: '#2a4a15' };
+    if (bpm < 100) return { label: 'Normal',   bg: '#0a1525', color: '#4a9edd', border: '#153050' };
+    if (bpm < 140) return { label: 'Moderado', bg: '#1f1505', color: '#e09030', border: '#4a3010' };
+    return              { label: 'Alto',      bg: '#1f0a0a', color: '#E24B4A', border: '#4a1515' };
+  }
+
+  function triggerBeat(bpm) {
+    bpmValue.textContent = bpm;
+    heartIcon.classList.remove('beat');
+    void heartIcon.offsetWidth;
+    heartIcon.classList.add('beat');
+    heartIcon.addEventListener('animationend', () => heartIcon.classList.remove('beat'), { once: true });
+    const zone = getZone(bpm);
+    zoneBadge.textContent       = zone.label;
+    zoneBadge.style.background  = zone.bg;
+    zoneBadge.style.color       = zone.color;
+    zoneBadge.style.borderColor = zone.border;
+    heartPath.setAttribute('fill', zone.color);
+  }
+
+  function pushSamples(samples) {
+    for (let i = 0; i < samples.length; i++) {
+      ecgBuffer[writeIndex] = (samples[i] / ADC_MAX) * VREF;
+      writeIndex = (writeIndex + 1) % TOTAL_SAMPLES;
+      if (writeIndex === 0) bufferFull = true;
+    }
+    const last = (samples[samples.length - 1] / ADC_MAX) * VREF;
+    ecgVoltage.textContent = last.toFixed(3) + ' V';
+  }
+
+  function drawECG() {
+    animFrame = requestAnimationFrame(drawECG);
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const total = bufferFull ? TOTAL_SAMPLES : writeIndex;
+    if (total < 2) return;
+
+    ctx.strokeStyle = '#1e1e1e';
+    ctx.lineWidth = 0.5;
+    const gridCols = 8;
+    const gridRows = 4;
+    for (let i = 1; i < gridCols; i++) {
+      ctx.beginPath();
+      ctx.moveTo((w / gridCols) * i, 0);
+      ctx.lineTo((w / gridCols) * i, h);
+      ctx.stroke();
+    }
+    for (let i = 1; i < gridRows; i++) {
+      ctx.beginPath();
+      ctx.moveTo(0, (h / gridRows) * i);
+      ctx.lineTo(w, (h / gridRows) * i);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#444';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    for (let i = 0; i <= gridRows; i++) {
+      const v = (VREF - (VREF / gridRows) * i).toFixed(1);
+      ctx.fillText(v + 'V', 4, (h / gridRows) * i + 12);
+    }
+
+    const data = new Float32Array(TOTAL_SAMPLES);
+    if (bufferFull) {
+      for (let i = 0; i < TOTAL_SAMPLES; i++) {
+        data[i] = ecgBuffer[(writeIndex + i) % TOTAL_SAMPLES];
+      }
+    } else {
+      for (let i = 0; i < writeIndex; i++) {
+        data[i] = ecgBuffer[i];
+      }
+    }
+
+    const pointCount = bufferFull ? TOTAL_SAMPLES : writeIndex;
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#E24B4A';
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < pointCount; i++) {
+      const x = (i / (TOTAL_SAMPLES - 1)) * w;
+      const y = h - (data[i] / VREF) * h * 0.9 - h * 0.05;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  function resetState() {
+    ecgBuffer = new Float32Array(TOTAL_SAMPLES);
+    writeIndex = 0;
+    bufferFull = false;
+    bpmValue.textContent = '--';
+    zoneBadge.textContent = 'Esperando datos';
+    zoneBadge.style.background = '';
+    zoneBadge.style.color = '';
+    zoneBadge.style.borderColor = '';
+    heartPath.setAttribute('fill', '#E24B4A');
+    ecgVoltage.textContent = '-- V';
+    bpmMicro.textContent = '--';
+    bpmPt.textContent = '--';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  connectBtn.addEventListener('click', () => {
+    if (client && client.connected) {
+      client.end();
+      cancelAnimationFrame(animFrame);
+      setStatus('', 'Desconectado');
+      connectBtn.textContent = 'Conectar';
+      resetState();
+      return;
+    }
+
+    errorMsg.textContent = '';
+    const host = document.getElementById('cfg-host').value.trim();
+    const user = document.getElementById('cfg-user').value.trim();
+    const pass = document.getElementById('cfg-pass').value.trim();
+    const url  = `wss://${host}/mqtt`;
+
+    setStatus('', 'Conectando...');
+    connectBtn.textContent = 'Conectando...';
+    connectBtn.disabled = true;
+
+    client = mqtt.connect(url, {
+      username: user,
+      password: pass,
+      rejectUnauthorized: false,
+      reconnectPeriod: 0,
+      connectTimeout: 8000,
+    });
+
+    client.on('connect', () => {
+      setStatus('connected', 'Conectado');
+      connectBtn.textContent = 'Desconectar';
+      connectBtn.disabled = false;
+      client.subscribe('/hr');
+      client.subscribe('/ECG');
+      client.subscribe('/hr_pt');
+      drawECG();
+    });
+
+    client.on('message', (topic, payload) => {
+      if (topic === '/hr') {
+        const val = parseInt(payload.toString().trim(), 10);
+        if (!isNaN(val) && val > 0 && val < 300) {
+          triggerBeat(val);
+          bpmMicro.textContent = val;
+        }
+      } else if (topic === '/hr_pt') {
+        const val = parseInt(payload.toString().trim(), 10);
+        if (!isNaN(val) && val > 0 && val < 300) {
+          bpmPt.textContent = val;
+        }
+      } else if (topic === '/ECG') {
+        if (payload.length < 64) return;
+        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+        const samples = [];
+        for (let i = 0; i < 32; i++) {
+          samples.push(view.getUint16(i * 2, true));
+        }
+        pushSamples(samples);
+      }
+    });
+
+    client.on('error', () => {
+      setStatus('error', 'Error de conexión');
+      errorMsg.textContent = `No se pudo conectar. ¿Aceptaste el certificado en https://${host}?`;
+      connectBtn.textContent = 'Reintentar';
+      connectBtn.disabled = false;
+    });
+
+    client.on('close', () => {
+      if (statusDot.className !== 'error') {
+        setStatus('', 'Desconectado');
+        connectBtn.textContent = 'Conectar';
+        connectBtn.disabled = false;
+      }
+    });
+  });
+</script>
+</body>
+</html>
