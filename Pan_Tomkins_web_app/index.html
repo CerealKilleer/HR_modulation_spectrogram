@@ -447,7 +447,7 @@
 
     client.on('message', (topic, payload) => {
       if (topic === '/hr') {
-        const val = parseInt(payload.toString().trim(), 10);
+        cconst val = Math.round(Number(payload.toString().trim()));
         if (!isNaN(val) && val > 0 && val < 300) {
           triggerBeat(val);
           bpmMicro.textContent = val;

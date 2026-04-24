@@ -194,6 +194,7 @@ static bool fft_execute(float *y, size_t fft_n_samples)
 float get_hr(hr_t *hr_params)
 {
     float *mod_spec = hr_params->mod_spectrogram;
+    static float last_hr = 0.0;
     size_t f_max = hr_params->signal_freq_high_sample;
     size_t f_min = hr_params->signal_freq_low_sample;
     size_t fm_low = hr_params->mod_freq_low_sample;
@@ -223,7 +224,9 @@ float get_hr(hr_t *hr_params)
         }
     }
 
-    float hr = 60.0f * (hr_params->mod_freq_res * best_fm_idx);
-
+    float new_hr = 60.0f * (hr_params->mod_freq_res * best_fm_idx);
+    float hr =  0.5 * new_hr + 0.5 * last_hr;
+    last_hr = hr;
+    
     return hr;
 }
